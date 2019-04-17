@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -10,7 +9,9 @@ import (
 	"math/rand"
 	"net/http"
 	_ "net/http/pprof"
+	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/giongto35/cloud-game/ui"
@@ -23,12 +24,12 @@ import (
 )
 
 const (
-	width  = 256
-	height = 240
-	scale  = 3
-	title  = "NES"
+	width        = 256
+	height       = 240
+	scale        = 3
+	title        = "NES"
 	gameboyIndex = "./static/gameboy.html"
-	debugIndex = "./static/index_ws.html"
+	debugIndex   = "./static/index_ws.html"
 )
 
 var indexFN = gameboyIndex
@@ -50,7 +51,7 @@ type WSPacket struct {
 // A room stores all the channel for interaction between all webRTCs session and emulator
 type Room struct {
 	imageChannel chan *image.RGBA
-	audioChanel chan float32
+	audioChanel  chan float32
 	inputChannel chan int
 	// closedChannel is to fire exit event when there is no webRTC session running
 	closedChannel chan bool
@@ -64,7 +65,7 @@ var rooms map[string]*Room
 
 func main() {
 	fmt.Println("Usage: ./game [debug]")
-	if len(os.Args) > 1  {
+	if len(os.Args) > 1 {
 		// debug
 		indexFN = debugIndex
 		fmt.Println("Use debug version")
@@ -82,7 +83,6 @@ func main() {
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static"))))
 	http.ListenAndServe(":8000", nil)
 }
-
 
 func getWeb(w http.ResponseWriter, r *http.Request) {
 	bs, err := ioutil.ReadFile(indexFN)
@@ -105,7 +105,7 @@ func initRoom(roomID, gameName string) string {
 
 	// create director
 	director := ui.NewDirector(roomID, imageChannel, audioChannel, inputChannel, closedChannel)
-	
+
 	rooms[roomID] = &Room{
 		imageChannel:  imageChannel,
 		audioChanel:   audioChannel,
@@ -231,7 +231,7 @@ func ws(w http.ResponseWriter, r *http.Request) {
 
 			// maybe we wont close websocket
 			// isDone = true
-		
+
 		case "save":
 			log.Println("Saving game state")
 			res.ID = "save"
@@ -310,13 +310,15 @@ func fanoutScreen(imageChannel chan *image.RGBA, roomID string) {
 	}
 }
 
-
 // fanoutAudio fanout outputs to all webrtc in the same room
 func fanoutAudio(audioChannel chan float32, roomID string) {
-	var output float32
-	pcm := make([]float32, 240)
+	timeStamp := 40
+	sampleRate := 16000
+	var encodeSize = timeStamp * sampleRate / 1000
+	log.Println(encodeSize)
+	pcm := make([]float32, encodeSize)
 
-	enc, err := opus.NewEncoder(48000, 2, opus.AppVoIP)
+	enc, err := opus.NewEncoder(sampleRate, 1, opus.AppVoIP)
 	// ix, _ := enc.DTX() //false
 	// ix1, _ := enc.Bitrate() //120000
 	// ix2, _ := enc.Complexity() //9
@@ -326,39 +328,54 @@ func fanoutAudio(audioChannel chan float32, roomID string) {
 	enc.SetMaxBandwidth(opus.Fullband)
 	enc.SetBitrateToAuto()
 	enc.SetComplexity(10)
-	
+
 	if err != nil {
 		log.Println("[!] Cannot create audio encoder")
 		return
 	}
 
-	c := time.Tick(time.Microsecond * 2500)
+	i := -1
+	buffer := make([]byte, 10000)
+	l := sync.Mutex{}
 
-	for range c {
-	// for {
-		for i := 0; i < len(pcm); i++ {
-			if i % 2 == 0 {
-				select {
-				case sample := <- audioChannel:
-					output = sample
-				default:
-					output = 0
-					
+	go func() {
+		for sample := range audioChannel {
+			i++
+			//fmt.Println(i, sample)
+			//if i%2 == 0 {
+			//pcm[i] = sample
+			// pcm[i] = <- audioChannel
+			pcm = append(pcm, sample)
+			//} else {
+			//pcm[i] = 0
+			//pcm = append(pcm, 0)
+			//}
+
+			data := make([]byte, 640)
+			if i+1 == encodeSize {
+				n, err := enc.EncodeFloat32(pcm, data)
+
+				if err != nil {
+					log.Println("[!] Failed to decode", err)
 				}
-				pcm[i] = output
-				// pcm[i] = <- audioChannel
+				data = data[:n]
+				l.Lock()
+				buffer = append(buffer, data...)
+				l.Unlock()
+				// reset
+				//pcm = pcm[:encodeSize]
+				pcm = pcm[:0]
+				i = -1
 			}
 		}
+	}()
 
-		data := make([]byte, 1000)
-		n, err := enc.EncodeFloat32(pcm, data)
+	c := time.Tick(time.Microsecond * 2500)
+	for range c {
+		// for {
 
-		if err != nil {
-			log.Println("[!] Failed to decode")
-			continue
-		}
-		data = data[:n]
-
+		l.Lock()
+		log.Println("Encoding buffer", len(buffer))
 		isRoomRunning := false
 		for _, webRTC := range rooms[roomID].rtcSessions {
 			// Client stopped
@@ -370,10 +387,12 @@ func fanoutAudio(audioChannel chan float32, roomID string) {
 			// fanout imageChannel
 			if webRTC.IsConnected() {
 				// NOTE: can block here
-				webRTC.AudioChannel <- data
+				webRTC.AudioChannel <- buffer
 			}
 			isRoomRunning = true
 		}
+		buffer = buffer[:0]
+		l.Unlock()
 
 		if isRoomRunning == false {
 			log.Println("Closed room from audio routine", roomID)
