@@ -2,12 +2,15 @@ package worker
 
 import (
 	"log"
+	"strconv"
+	"time"
 
 	"github.com/giongto35/cloud-game/config"
 	"github.com/giongto35/cloud-game/cws"
 	"github.com/giongto35/cloud-game/webrtc"
 	"github.com/giongto35/cloud-game/worker/room"
 	"github.com/gorilla/websocket"
+	ping "github.com/sparrc/go-ping"
 )
 
 // OverlordClient maintans connection to overlord
@@ -172,7 +175,33 @@ func (h *Handler) RouteOverlord() {
 		},
 	)
 
+	oClient.Receive(
+		"getCandidateMetric",
+		func(resp cws.WSPacket) (req cws.WSPacket) {
+			log.Println("Received a get candidate metric from overlord", resp)
+			frontendAddr := resp.Data
+			s := getLatency(frontendAddr).Nanoseconds()
+
+			return cws.WSPacket{
+				ID:   "getCandidateMetric",
+				Data: strconv.FormatInt(s, 10),
+			}
+		})
+
 	// heartbeat to keep pinging overlord. We not ping from server to browser, so we don't call heartbeat in browserClient
+}
+
+func getLatency(address string) time.Duration {
+	log.Println("Pinging ", address)
+	pinger, err := ping.NewPinger(address)
+	pinger.SetPrivileged(true)
+	if err != nil {
+		panic(err)
+	}
+	pinger.Count = 3
+	pinger.Run()                 // blocks until finished
+	stats := pinger.Statistics() // get send/receive/rtt stats
+	return stats.MaxRtt
 }
 
 func getServerIDOfRoom(oc *OverlordClient, roomID string) string {

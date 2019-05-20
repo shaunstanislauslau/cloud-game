@@ -9,6 +9,7 @@ import (
 
 type WorkerClient struct {
 	*cws.Client
+	ID string
 }
 
 // RouteWorker are all routes server received from worker
@@ -153,8 +154,9 @@ func (s *Session) RouteWorker() {
 }
 
 // NewWorkerClient returns a client connecting to worker. This connection exchanges information between workers and server
-func NewWorkerClient(c *websocket.Conn) *WorkerClient {
+func NewWorkerClient(c *websocket.Conn, id string) *WorkerClient {
 	return &WorkerClient{
 		Client: cws.NewClient(c),
+		ID:     id,
 	}
 }

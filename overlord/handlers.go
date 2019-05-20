@@ -5,8 +5,12 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math"
 	"math/rand"
 	"net/http"
+	"strconv"
+	"strings"
+	"sync"
 
 	"github.com/giongto35/cloud-game/cws"
 	"github.com/giongto35/cloud-game/overlord/gamelist"
@@ -62,7 +66,7 @@ func (o *Server) WSO(w http.ResponseWriter, r *http.Request) {
 	log.Println("Overlord: A new server connected to Overlord", serverID)
 
 	// Register to workersClients map the client connection
-	client := NewWorkerClient(c)
+	client := NewWorkerClient(c, serverID)
 	o.workerClients[serverID] = client
 	defer o.cleanConnection(client, serverID)
 
@@ -115,12 +119,23 @@ func (o *Server) WS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.Close()
 
+	// Get address of the websocket connection
+	//frontendAddr := readUserIP(r)
+	frontendAddr := getRemoteAddress(c)
+
+	log.Println("Frontend address:", frontendAddr)
 	// Set up server
 	// SessionID will be the unique per frontend connection
 	sessionID := uuid.Must(uuid.NewV4()).String()
-	serverID, err := o.findBestServer()
+	var serverID string
+	if frontendAddr == "" {
+		serverID, err = o.findBestServerRandom()
+	} else {
+		serverID, err = o.findBestServer(frontendAddr)
+	}
+
 	if err != nil {
-		log.Fatal(err)
+		return
 	}
 
 	client := NewBrowserClient(c)
@@ -163,8 +178,8 @@ func (o *Server) WS(w http.ResponseWriter, r *http.Request) {
 	wssession.BrowserClient.Listen()
 }
 
-// findBestServer returns the best server for a session
-func (o *Server) findBestServer() (string, error) {
+// findBestServerRandom returns the best server for a session
+func (o *Server) findBestServerRandom() (string, error) {
 	// TODO: Find best Server by latency, currently return by ping
 	if len(o.workerClients) == 0 {
 		return "", errors.New("No server found")
@@ -181,6 +196,66 @@ func (o *Server) findBestServer() (string, error) {
 	return "", errors.New("No server found")
 }
 
+// findBestServer returns the best server for a session
+func (o *Server) findBestServer(frontendAddr string) (string, error) {
+	// TODO: Find best Server by latency, currently return by ping
+	if len(o.workerClients) == 0 {
+		return "", errors.New("No server found")
+	}
+
+	// TODO: Add timeout
+	log.Println("Ping worker to get latency for ", frontendAddr)
+	latencies := o.getLatencyMap(frontendAddr)
+
+	if len(latencies) == 0 {
+		return "", errors.New("No server found")
+	}
+
+	var bestWorker *WorkerClient
+	var minLatency int64 = math.MaxInt64
+
+	for wc, l := range latencies {
+		if l < minLatency {
+			bestWorker = wc
+			minLatency = l
+		}
+	}
+
+	return bestWorker.ID, nil
+}
+
+func (o *Server) getLatencyMap(frontendAddr string) map[*WorkerClient]int64 {
+	latencyMap := map[*WorkerClient]int64{}
+	wg := sync.WaitGroup{}
+
+	for _, workerClient := range o.workerClients {
+		log.Println("Ping worker to get latency")
+
+		// TODO: Add timeout
+		wg.Add(1)
+		go func(frontendAddr string) {
+			l := workerClient.SyncSend(cws.WSPacket{
+				ID:   "getCandidateMetric",
+				Data: frontendAddr,
+			})
+
+			log.Println("Latency from worker: ", l)
+			li, err := strconv.ParseInt(l.Data, 10, 64)
+			if err != nil {
+				latencyMap[workerClient] = math.MaxInt64
+				return
+			}
+			latencyMap[workerClient] = li
+			wg.Done()
+		}(frontendAddr)
+
+		wg.Wait()
+		log.Println("Got all latency from workers: ", latencyMap)
+	}
+
+	return latencyMap
+}
+
 func (o *Server) cleanConnection(client *WorkerClient, serverID string) {
 	log.Println("Unregister server from overlord")
 	// Remove serverID from servers
@@ -193,4 +268,32 @@ func (o *Server) cleanConnection(client *WorkerClient, serverID string) {
 	}
 
 	client.Close()
+}
+
+func readUserIP(r *http.Request) string {
+	IPAddress := r.Header.Get("X-Real-Ip")
+	if IPAddress == "" {
+		IPAddress = r.Header.Get("X-Forwarded-For")
+	}
+	if IPAddress == "" {
+		IPAddress = r.RemoteAddr
+	}
+	// TODO: For debug, should remove it
+	if IPAddress == "" {
+		return "localhost"
+	}
+	return IPAddress
+}
+
+func getRemoteAddress(conn *websocket.Conn) string {
+	var remoteAddr string
+	log.Println(conn.RemoteAddr().String())
+	if parts := strings.Split(conn.RemoteAddr().String(), ":"); len(parts) == 2 {
+		remoteAddr = parts[0]
+	}
+	if remoteAddr == "" {
+		return "localhost"
+	}
+
+	return remoteAddr
 }
