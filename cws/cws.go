@@ -32,6 +32,7 @@ type WSPacket struct {
 	RoomID      string `json:"room_id"`
 	PlayerIndex int    `json:"player_index"`
 
+	// Meta data, not to be set
 	TargetHostID string `json:"target_id"`
 	PacketID     string `json:"packet_id"`
 	// Globally ID of a session

@@ -75,7 +75,30 @@ conn.onmessage = e => {
     case "load":
         log(`Got load response: ${d["data"]}`);
         break;
+    case "checkLatency":
+        var s = d["data"];
+        var latencyList = [];
+        curPacketID = d["packet_id"];
+        log(s);
+        log(`Received latency ${s}`)
+        addrs = s.split(",")
+        for (addr in addrs) {
+            beforeTime = Date.now();
+            resp = httpGet(addr+"/echo")
+            afterTime = Date.now();
+            latencyList.push(afterTime - beforeTime)
+            log(`Return resp ${resp}`)
+        }
+        conn.send(JSON.stringify({"id": "checkLatency", "data": latencyList.join(), "packet_id": curPacketID}));
     }
+}
+
+function httpGet(theUrl)
+{
+        var xmlHttp = new XMLHttpRequest();
+        xmlHttp.open( "GET", theUrl, false  ); // false for synchronous request
+        xmlHttp.send( null  );
+        return xmlHttp.responseText;
 }
 
 function sendPing() {

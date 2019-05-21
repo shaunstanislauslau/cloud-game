@@ -10,3 +10,4 @@ var Port = flag.String("port", "8000", "Port of the game")
 var IsMonitor = flag.Bool("monitor", false, "Turn on monitor")
 var Width = 256
 var Height = 240
+var WorkerPort int

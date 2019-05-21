@@ -30,10 +30,12 @@ type Handler struct {
 	onlineStorage *storage.Client
 	// sessions handles all sessions server is handler (key is sessionID)
 	sessions map[string]*Session
+	// host is the address of worker machine
+	host string
 }
 
 // NewHandler returns a new server
-func NewHandler(overlordConn *websocket.Conn, isDebug bool, gamePath string) *Handler {
+func NewHandler(overlordConn *websocket.Conn, isDebug bool, gamePath string, host string) *Handler {
 	onlineStorage := storage.NewInitClient()
 	oClient := NewOverlordClient(overlordConn)
 
@@ -43,6 +45,7 @@ func NewHandler(overlordConn *websocket.Conn, isDebug bool, gamePath string) *Ha
 		sessions:      map[string]*Session{},
 		gamePath:      gamePath,
 		onlineStorage: onlineStorage,
+		host:          host,
 	}
 }
 

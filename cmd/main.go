@@ -4,6 +4,7 @@ import (
 	"flag"
 	"log"
 	"math/rand"
+	"net"
 	"net/http"
 	_ "net/http/pprof"
 	"runtime"
@@ -56,7 +57,12 @@ func initializeWorker() {
 		log.Println("Run as a single server")
 	}
 
-	worker := worker.NewHandler(conn, *config.IsDebug, gamePath)
+	port := rand.Int()%100 + 8000
+	host := getOutboundIP().String() + ":" + strconv.Itoa(port)
+	//config.WorkerPort = port
+	log.Println("Listening ", host)
+
+	worker := worker.NewHandler(conn, *config.IsDebug, gamePath, host)
 
 	defer func() {
 		log.Println("Close worker")
@@ -64,9 +70,28 @@ func initializeWorker() {
 	}()
 
 	go worker.Run()
-	port := rand.Int()%100 + 8000
-	log.Println("Listening at port: localhost:", port)
+
+	// Echo response back, this endpoint is to test latency with browser
+	http.HandleFunc("/echo", func(w http.ResponseWriter, r *http.Request) {
+		log.Println("Frontend echoing...")
+		w.Write([]byte("echo back"))
+	})
 	http.ListenAndServe(":"+strconv.Itoa(port), nil)
+}
+
+// get preferred outbound ip of this machine
+func getOutboundIP() net.IP {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		log.Fatal(err)
+
+	}
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+
+	return localAddr.IP
+
 }
 
 func monitor() {
