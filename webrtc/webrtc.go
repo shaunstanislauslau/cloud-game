@@ -16,8 +16,6 @@ import (
 	"github.com/pion/webrtc/v2/pkg/media"
 )
 
-var webrtcconfig = webrtc.Configuration{ICEServers: []webrtc.ICEServer{{URLs: []string{"stun:159.65.141.209:3478", "stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"}}}}
-
 // Allows compressing offer/answer to bypass terminal input limits.
 const compress = false
 
@@ -114,9 +112,18 @@ func (w *WebRTC) StartClient(remoteSession string, iceCandidates [][]byte, width
 
 	log.Println("=== StartClient ===")
 
-	w.connection, err = webrtc.NewPeerConnection(webrtcconfig)
-	if err != nil {
-		return "", err
+	if *config.IsPublicServer {
+		var webrtcconfig = webrtc.Configuration{}
+		w.connection, err = webrtc.NewPeerConnection(webrtcconfig)
+		if err != nil {
+			return "", err
+		}
+	} else {
+		var webrtcconfig = webrtc.Configuration{ICEServers: []webrtc.ICEServer{{URLs: []string{"stun:159.65.141.209:3478", "stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"}}}}
+		w.connection, err = webrtc.NewPeerConnection(webrtcconfig)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	vp8Track, err := w.connection.NewTrack(webrtc.DefaultPayloadTypeVP8, rand.Uint32(), "video", "pion2")

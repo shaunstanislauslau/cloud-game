@@ -86,6 +86,9 @@ func main() {
 			log.Fatal("Overlord connection is invalid. Should have the form `ws://.../wso`")
 		}
 		log.Println("Running as worker ")
+		if *config.IsPublicServer {
+			log.Println("Public server, by pass NAT. No STUN")
+		}
 		initializeWorker()
 	}
 }
