@@ -15,6 +15,7 @@ import (
 	"github.com/giongto35/cloud-game/overlord"
 	"github.com/giongto35/cloud-game/worker"
 	"github.com/gorilla/websocket"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const gamePath = "games"
@@ -54,9 +55,18 @@ func initializeWorker() {
 	}()
 
 	go worker.Run()
-	port := rand.Int()%100 + 8000
-	log.Println("Listening at port: localhost:", port)
-	http.ListenAndServe(":"+strconv.Itoa(port), nil)
+	// polling ports because we can run multiple workers on the same host
+	port := 9000
+	for {
+		log.Println("Listening at port: localhost:", port)
+		http.Handle("/metrics", promhttp.Handler())
+		err := http.ListenAndServe(":"+strconv.Itoa(port), nil)
+		// If port is listened, we try the next port
+		if err != nil {
+			log.Println("Failed to listening at port: localhost:", port, " : Retry with new port")
+			port++
+		}
+	}
 }
 
 func monitor() {
